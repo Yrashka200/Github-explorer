@@ -1,0 +1,588 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>GitHub Explorer</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; font-family: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif; }
+    body { background: #f6f8fa; min-height: 100vh; padding: 1rem; display: flex; justify-content: center; transition: background 0.2s, color 0.2s; }
+    body.dark { background: #0d1117; color: #e6edf3; }
+    .app { max-width: 1200px; width: 100%; }
+    header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.8rem; margin-bottom: 1rem; }
+    .logo { display: flex; align-items: center; gap: 0.5rem; font-size: 1.5rem; font-weight: 700; color: inherit; }
+    .logo i { color: #1f883d; font-size: 1.8rem; }
+    .header-actions { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
+    .theme-toggle { background: transparent; border: 1px solid #d0d7de; border-radius: 40px; padding: 0.4rem 0.8rem; font-size: 0.9rem; cursor: pointer; color: inherit; }
+    .theme-toggle:hover { background: rgba(0,0,0,0.05); }
+    body.dark .theme-toggle { border-color: #30363d; }
+    body.dark .theme-toggle:hover { background: #21262d; }
+    .search-box { flex: 1 1 280px; display: flex; background: white; border-radius: 40px; border: 1px solid #d0d7de; transition: 0.2s; }
+    body.dark .search-box { background: #161b22; border-color: #30363d; }
+    .search-box:focus-within { border-color: #1f883d; box-shadow: 0 0 0 3px rgba(31,136,61,0.2); }
+    .search-box i { padding: 0.7rem 0 0.7rem 1rem; color: #57606a; }
+    body.dark .search-box i { color: #8b949e; }
+    .search-box input { border: none; padding: 0.7rem 0.5rem; font-size: 0.95rem; flex: 1; background: transparent; outline: none; color: inherit; }
+    .search-box input::placeholder { color: #8b949e; }
+    .search-box button { background: #1f883d; border: none; border-radius: 0 40px 40px 0; padding: 0 1.2rem; font-weight: 600; color: white; cursor: pointer; transition: 0.15s; }
+    .search-box button:hover { background: #1a7a34; }
+    .filters-row { display: flex; flex-wrap: wrap; gap: 0.4rem 0.6rem; margin: 0.8rem 0; align-items: center; }
+    .filter-btn { background: white; border: 1px solid #d0d7de; padding: 0.25rem 0.8rem; border-radius: 30px; font-size: 0.75rem; font-weight: 500; color: #24292f; cursor: pointer; transition: 0.1s; display: inline-flex; align-items: center; gap: 0.3rem; }
+    body.dark .filter-btn { background: #161b22; border-color: #30363d; color: #e6edf3; }
+    .filter-btn.active { background: #1f883d; border-color: #1f883d; color: white; }
+    .filter-btn.active i { color: white; }
+    .filter-btn:hover { background: #f0f2f4; }
+    body.dark .filter-btn:hover { background: #21262d; }
+    .filter-btn.active:hover { background: #1a7a34; }
+    .sort-options { display: flex; flex-wrap: wrap; align-items: center; gap: 0.3rem 0.6rem; margin-left: auto; }
+    .sort-options select, .sort-options input { background: white; border: 1px solid #d0d7de; border-radius: 30px; padding: 0.2rem 0.8rem; font-size: 0.75rem; color: inherit; outline: none; }
+    body.dark .sort-options select, body.dark .sort-options input { background: #161b22; border-color: #30363d; color: #e6edf3; }
+    .sort-options label { font-size: 0.75rem; font-weight: 500; display: flex; align-items: center; gap: 0.2rem; }
+    .random-btn { background: #1f883d; border: none; color: white; border-radius: 30px; padding: 0.25rem 1rem; font-weight: 600; font-size: 0.75rem; cursor: pointer; transition: 0.15s; display: inline-flex; align-items: center; gap: 0.3rem; }
+    .random-btn:hover { background: #1a7a34; }
+    .results-header { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 0.3rem; margin: 1rem 0 0.6rem 0; border-bottom: 1px solid #d8dee4; padding-bottom: 0.4rem; }
+    body.dark .results-header { border-bottom-color: #30363d; }
+    .results-header h2 { font-size: 1.2rem; font-weight: 600; }
+    .results-header span { font-size: 0.8rem; color: #57606a; }
+    body.dark .results-header span { color: #8b949e; }
+    .card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 1rem; margin-top: 0.3rem; }
+    .result-card { background: white; border-radius: 14px; padding: 1rem; box-shadow: 0 2px 8px rgba(0,0,0,0.04); border: 1px solid #eaeef2; transition: 0.15s; display: flex; flex-direction: column; cursor: pointer; }
+    .result-card:hover { border-color: #1f883d; box-shadow: 0 4px 16px rgba(31,136,61,0.1); }
+    body.dark .result-card { background: #161b22; border-color: #30363d; }
+    body.dark .result-card:hover { border-color: #1f883d; }
+    .card-title { display: flex; align-items: center; gap: 0.5rem; font-size: 1rem; font-weight: 600; color: inherit; margin-bottom: 0.2rem; }
+    .card-title i { color: #1f883d; font-size: 1rem; width: 1.4rem; text-align: center; }
+    .card-sub { font-size: 0.8rem; color: #57606a; margin-bottom: 0.3rem; word-break: break-word; }
+    body.dark .card-sub { color: #8b949e; }
+    .card-desc { font-size: 0.85rem; color: inherit; margin: 0.2rem 0 0.4rem 0; flex: 1; line-height: 1.4; }
+    .user-stats { display: flex; flex-wrap: wrap; gap: 0.3rem 0.8rem; background: #f6f8fa; border-radius: 10px; padding: 0.4rem 0.7rem; margin: 0.3rem 0 0.4rem 0; border: 1px solid #eaeef2; font-size: 0.75rem; }
+    body.dark .user-stats { background: #0d1117; border-color: #30363d; }
+    .user-stats .stat-item { display: flex; align-items: center; gap: 0.2rem; }
+    .user-stats .stat-item i { color: #1f883d; width: 1rem; }
+    .user-stats .stat-item .num { font-weight: 600; color: inherit; }
+    .user-avatar-row { display: flex; align-items: center; gap: 0.6rem; margin-bottom: 0.2rem; }
+    .user-avatar-row img { width: 40px; height: 40px; border-radius: 50%; border: 2px solid #1f883d; object-fit: cover; }
+    .user-avatar-row .user-login { font-weight: 600; font-size: 1rem; }
+    .card-meta { display: flex; flex-wrap: wrap; gap: 0.3rem 0.8rem; font-size: 0.75rem; color: #57606a; border-top: 1px solid #eaeef2; padding-top: 0.4rem; margin-top: 0.2rem; }
+    body.dark .card-meta { border-top-color: #30363d; color: #8b949e; }
+    .card-meta i { margin-right: 0.15rem; width: 0.9rem; }
+    .card-link { color: #1f883d; text-decoration: none; font-weight: 500; font-size: 0.8rem; display: inline-flex; align-items: center; gap: 0.2rem; margin-top: 0.2rem; }
+    .card-link:hover { text-decoration: underline; }
+    .empty-state { text-align: center; padding: 2rem 1rem; color: #57606a; background: white; border-radius: 20px; border: 1px dashed #d0d7de; margin-top: 0.5rem; }
+    body.dark .empty-state { background: #161b22; border-color: #30363d; color: #8b949e; }
+    .empty-state i { font-size: 2.5rem; margin-bottom: 0.5rem; color: #8b949e; }
+    .footer { margin-top: 2rem; text-align: center; font-size: 0.75rem; color: #8b949e; }
+    .fresh-badge { background: #1f883d; color: white; padding: 0.1rem 0.5rem; border-radius: 30px; font-size: 0.6rem; font-weight: 600; margin-left: 0.3rem; }
+    .topic-tag { display: inline-block; background: #ddf4e4; padding: 0.1rem 0.5rem; border-radius: 30px; font-size: 0.65rem; color: #1f883d; margin: 0.1rem; }
+    body.dark .topic-tag { background: #1f883d33; color: #7ee49a; }
+    @media (max-width: 700px) {
+      .sort-options { margin-left: 0; width: 100%; }
+      .search-box button span { display: none; }
+      .search-box button { padding: 0 0.8rem; }
+    }
+    .modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); backdrop-filter: blur(4px); z-index: 1000; justify-content: center; align-items: center; padding: 1rem; overflow-y: auto; }
+    .modal-overlay.open { display: flex; }
+    .modal-box { background: white; max-width: 880px; width: 100%; border-radius: 24px; padding: 1.5rem; position: relative; max-height: 95vh; overflow-y: auto; box-shadow: 0 20px 60px rgba(0,0,0,0.3); animation: modalIn 0.2s ease; }
+    body.dark .modal-box { background: #161b22; border: 1px solid #30363d; }
+    @keyframes modalIn { from { opacity: 0; transform: scale(0.95) translateY(15px); } to { opacity: 1; transform: scale(1) translateY(0); } }
+    .modal-close { position: sticky; top: 0; float: right; background: none; border: none; font-size: 1.6rem; color: #57606a; cursor: pointer; padding: 0 0.3rem; z-index: 10; }
+    body.dark .modal-close { color: #8b949e; }
+    .modal-close:hover { color: #1f883d; }
+    .modal-user-header { display: flex; align-items: center; gap: 1.2rem; flex-wrap: wrap; margin-bottom: 1rem; border-bottom: 1px solid #eaeef2; padding-bottom: 1rem; }
+    body.dark .modal-user-header { border-bottom-color: #30363d; }
+    .modal-user-header img { width: 70px; height: 70px; border-radius: 50%; border: 3px solid #1f883d; object-fit: cover; }
+    .modal-user-header .info h2 { font-size: 1.5rem; margin-bottom: 0.1rem; }
+    .modal-user-header .info .bio { color: #57606a; font-size: 0.85rem; }
+    body.dark .modal-user-header .info .bio { color: #8b949e; }
+    .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 0.6rem; margin: 1rem 0 1.2rem 0; }
+    .stats-grid .stat-card { background: #f6f8fa; border-radius: 14px; padding: 0.6rem 0.8rem; text-align: center; border: 1px solid #eaeef2; }
+    body.dark .stats-grid .stat-card { background: #0d1117; border-color: #30363d; }
+    .stats-grid .stat-card .num { font-size: 1.3rem; font-weight: 700; color: #1f883d; }
+    .stats-grid .stat-card .label { font-size: 0.65rem; color: #57606a; text-transform: uppercase; letter-spacing: 0.03em; }
+    body.dark .stats-grid .stat-card .label { color: #8b949e; }
+    .chart-row { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin: 1rem 0; }
+    .chart-box { background: #f6f8fa; border-radius: 14px; padding: 0.8rem; border: 1px solid #eaeef2; }
+    body.dark .chart-box { background: #0d1117; border-color: #30363d; }
+    .chart-box h4 { margin-bottom: 0.4rem; font-size: 0.8rem; color: #57606a; }
+    body.dark .chart-box h4 { color: #8b949e; }
+    .chart-box canvas { max-height: 150px; max-width: 100%; }
+    .repo-list { margin-top: 1rem; border-top: 1px solid #eaeef2; padding-top: 0.8rem; }
+    body.dark .repo-list { border-top-color: #30363d; }
+    .repo-list h4 { margin-bottom: 0.4rem; font-size: 0.8rem; color: #57606a; }
+    body.dark .repo-list h4 { color: #8b949e; }
+    .repo-list .repo-item { display: flex; justify-content: space-between; align-items: center; padding: 0.3rem 0; border-bottom: 1px solid #eaeef2; font-size: 0.8rem; }
+    body.dark .repo-list .repo-item { border-bottom-color: #30363d; }
+    .repo-list .repo-item .name { font-weight: 500; }
+    .repo-list .repo-item .stars { color: #1f883d; }
+    .modal-loading { text-align: center; padding: 1.5rem; color: #57606a; }
+    body.dark .modal-loading { color: #8b949e; }
+    .token-status { font-size: 0.65rem; padding: 0.15rem 0.6rem; border-radius: 30px; background: #e74c3c33; color: #e74c3c; border: 1px solid #e74c3c55; }
+    .token-status.active { background: #1f883d33; color: #1f883d; border-color: #1f883d55; }
+    @media (max-width: 700px) { .chart-row { grid-template-columns: 1fr; } .modal-box { padding: 1rem; } }
+    .search-hint { font-size: 0.7rem; color: #57606a; margin-left: 0.5rem; }
+    body.dark .search-hint { color: #8b949e; }
+  </style>
+</head>
+<body>
+<div class="app" id="app">
+  <header>
+    <div class="logo"><i class="fab fa-github"></i> Explorer</div>
+    <div class="header-actions">
+      <span class="token-status" id="tokenStatus">⚡ 60 req/h</span>
+      <button class="theme-toggle" id="themeToggle"><i class="fas fa-moon"></i></button>
+    </div>
+  </header>
+  <div class="search-box">
+    <i class="fas fa-search"></i>
+    <input type="text" id="searchInput" placeholder="Username, repo, topic..." value="Yrashka200">
+    <button id="searchBtn"><i class="fas fa-arrow-right"></i></button>
+  </div>
+  <div class="filters-row" id="filterContainer">
+    <button class="filter-btn active" data-type="all"><i class="fas fa-globe"></i> All</button>
+    <button class="filter-btn" data-type="users"><i class="fas fa-user"></i> Users</button>
+    <button class="filter-btn" data-type="orgs"><i class="fas fa-building"></i> Orgs</button>
+    <button class="filter-btn" data-type="topics"><i class="fas fa-hashtag"></i> Topics</button>
+    <button class="filter-btn" data-type="repos"><i class="fas fa-book"></i> Books</button>
+    <button class="filter-btn" data-type="resources"><i class="fas fa-graduation-cap"></i> Learn</button>
+    <button class="random-btn" id="randomBtn"><i class="fas fa-dice"></i> Random</button>
+    <div class="sort-options">
+      <label><i class="fas fa-sort"></i></label>
+      <select id="sortSelect">
+        <option value="stars">⭐ Stars</option>
+        <option value="commits">Commits</option>
+        <option value="forks">Forks</option>
+        <option value="updated">Updated</option>
+      </select>
+      <label><i class="fas fa-list"></i></label>
+      <input type="number" id="perPageInput" min="5" max="30" value="10" style="width:50px;">
+    </div>
+  </div>
+  <div class="results-header">
+    <h2 id="resultTitle">Results</h2>
+    <span id="resultCount">0 items</span>
+  </div>
+  <div id="resultsContainer"><div class="card-grid" id="cardGrid"></div></div>
+  <div class="footer"><i class="fab fa-github"></i> click user for stats</div>
+</div>
+
+<div class="modal-overlay" id="modalOverlay">
+  <div class="modal-box">
+    <button class="modal-close" id="modalClose">&times;</button>
+    <div id="modalContent"><div class="modal-loading"><i class="fas fa-spinner fa-spin"></i> Loading...</div></div>
+  </div>
+</div>
+
+<script>
+(function() {
+  const searchInput = document.getElementById('searchInput');
+  const searchBtn = document.getElementById('searchBtn');
+  const cardGrid = document.getElementById('cardGrid');
+  const resultTitle = document.getElementById('resultTitle');
+  const resultCount = document.getElementById('resultCount');
+  const filterContainer = document.getElementById('filterContainer');
+  const themeToggle = document.getElementById('themeToggle');
+  const randomBtn = document.getElementById('randomBtn');
+  const sortSelect = document.getElementById('sortSelect');
+  const perPageInput = document.getElementById('perPageInput');
+  const modalOverlay = document.getElementById('modalOverlay');
+  const modalClose = document.getElementById('modalClose');
+  const modalContent = document.getElementById('modalContent');
+
+  let currentQuery = 'Yrashka200';
+  let currentType = 'all';
+  let darkMode = false;
+  let chartInstances = {};
+
+  themeToggle.addEventListener('click', () => {
+    darkMode = !darkMode;
+    document.body.classList.toggle('dark', darkMode);
+    themeToggle.innerHTML = `<i class="fas ${darkMode ? 'fa-sun' : 'fa-moon'}"></i>`;
+  });
+
+  // 
+  async function fetchAPI(url) {
+    const response = await fetch(url, {
+      headers: { 'Accept': 'application/vnd.github.v3+json' }
+    });
+    if (response.status === 403) {
+      const reset = response.headers.get('X-RateLimit-Reset');
+      const wait = reset ? (parseInt(reset) * 1000 - Date.now() + 2000) : 60000;
+      throw new Error(`Rate limit! Wait ${Math.ceil(wait/1000)}s`);
+    }
+    if (response.status === 404) return null;
+    if (!response.ok) throw new Error(`Error ${response.status}`);
+    return response.json();
+  }
+
+  
+  async function findUserDirect(username) {
+    try {
+      const data = await fetchAPI(`https://api.github.com/users/${username}`);
+      if (data && data.login) {
+        return [data];
+      }
+      return [];
+    } catch(e) {
+      return [];
+    }
+  }
+
+  // API 
+  async function searchUsers(query, perPage) {
+    try {
+      const data = await fetchAPI(`https://api.github.com/search/users?q=${encodeURIComponent(query)}&per_page=${perPage}`);
+      return data?.items || [];
+    } catch(e) {
+      return [];
+    }
+  }
+
+  
+  async function getUserStats(username) {
+    const user = await fetchAPI(`https://api.github.com/users/${username}`);
+    if (!user || !user.login) throw new Error('User not found');
+
+    let repos = [];
+    try {
+      repos = await fetchAPI(`https://api.github.com/users/${username}/repos?per_page=100`);
+      if (!repos) repos = [];
+    } catch(e) {}
+
+    let totalStars = 0, totalForks = 0;
+    const topRepos = (repos || []).slice(0, 10).map(r => ({
+      name: r.name, stars: r.stargazers_count || 0, forks: r.forks_count || 0,
+      language: r.language, url: r.html_url, description: r.description
+    }));
+    (repos || []).forEach(r => { totalStars += r.stargazers_count || 0; totalForks += r.forks_count || 0; });
+
+    let totalCommits = 0;
+    try {
+      const commits = await fetchAPI(`https://api.github.com/search/commits?q=author:${username}`);
+      totalCommits = commits?.total_count || 0;
+    } catch(e) {}
+
+    const activity = new Array(52).fill(0);
+    const sample = (repos || []).slice(0, 5);
+    for (const repo of sample) {
+      try {
+        const data = await fetchAPI(`https://api.github.com/repos/${repo.full_name}/stats/commit_activity`);
+        if (Array.isArray(data) && data.length === 52) {
+          data.forEach((w, i) => { if (w && w.total) activity[i] = (activity[i] || 0) + w.total; });
+        }
+      } catch(e) {}
+    }
+
+    return {
+      user, totalStars, totalForks, totalCommits,
+      followers: user.followers || 0, following: user.following || 0,
+      publicRepos: user.public_repos || 0, topRepos, commitActivity: activity,
+      bio: user.bio || 'No bio', avatar: user.avatar_url,
+      html_url: user.html_url, name: user.name || user.login
+    };
+  }
+
+  function renderModal(stats) {
+    const { user, totalStars, totalForks, totalCommits, followers, following, publicRepos, topRepos, commitActivity, bio, avatar, html_url, name } = stats;
+
+    modalContent.innerHTML = `
+      <div class="modal-user-header">
+        <img src="${avatar}" alt="${user.login}" />
+        <div class="info">
+          <h2>${name} <span style="font-weight:400;font-size:1rem;color:#57606a;">@${user.login}</span></h2>
+          <div class="bio">${bio}</div>
+          <div style="margin-top:0.2rem;display:flex;gap:0.5rem;flex-wrap:wrap;font-size:0.8rem;">
+            <a href="${html_url}" target="_blank" style="color:#1f883d;text-decoration:none;"><i class="fab fa-github"></i> View</a>
+            ${user.location ? `<span><i class="fas fa-map-pin"></i> ${user.location}</span>` : ''}
+          </div>
+        </div>
+      </div>
+      <div class="stats-grid">
+        <div class="stat-card"><div class="num">${publicRepos}</div><div class="label">Repos</div></div>
+        <div class="stat-card"><div class="num">${totalStars}</div><div class="label">⭐ Stars</div></div>
+        <div class="stat-card"><div class="num">${totalForks}</div><div class="label">Forks</div></div>
+        <div class="stat-card"><div class="num">${totalCommits}</div><div class="label">Commits</div></div>
+        <div class="stat-card"><div class="num">${followers}</div><div class="label">Followers</div></div>
+        <div class="stat-card"><div class="num">${following}</div><div class="label">Following</div></div>
+      </div>
+      <div class="chart-row">
+        <div class="chart-box"><h4>📈 52 weeks</h4><canvas id="commitChart"></canvas></div>
+        <div class="chart-box"><h4>⭐ Top repos</h4><canvas id="starsChart"></canvas></div>
+      </div>
+      <div class="repo-list">
+        <h4>📚 Top repositories</h4>
+        ${topRepos.map(r => `<div class="repo-item"><span class="name">${r.name}</span><span><i class="fas fa-star"></i> ${r.stars} <i class="fas fa-code-branch"></i> ${r.forks}</span></div>`).join('') || '<div style="color:#57606a;">No repos</div>'}
+      </div>
+    `;
+
+    setTimeout(() => {
+      const ctx1 = document.getElementById('commitChart');
+      const ctx2 = document.getElementById('starsChart');
+      if (ctx1) {
+        if (chartInstances.commit) chartInstances.commit.destroy();
+        chartInstances.commit = new Chart(ctx1, {
+          type: 'bar',
+          data: {
+            labels: Array.from({length: 52}, (_,i) => `${i+1}`),
+            datasets: [{ label: 'Commits', data: commitActivity, backgroundColor: '#1f883d55', borderColor: '#1f883d', borderWidth: 1 }]
+          },
+          options: { responsive: true, maintainAspectRatio: true, plugins: { legend: { display: false } },
+            scales: { y: { beginAtZero: true, grid: { color: darkMode ? '#30363d' : '#eaeef2' } },
+                     x: { grid: { display: false }, ticks: { maxTicksLimit: 12 } } } }
+        });
+      }
+      if (ctx2) {
+        if (chartInstances.stars) chartInstances.stars.destroy();
+        const sorted = [...topRepos].sort((a,b) => b.stars - a.stars).slice(0, 6);
+        chartInstances.stars = new Chart(ctx2, {
+          type: 'doughnut',
+          data: {
+            labels: sorted.map(r => r.name),
+            datasets: [{ data: sorted.map(r => r.stars), backgroundColor: ['#1f883d','#2ea043','#3fb950','#56d364','#7ee49a','#9ae6b4'], borderWidth: 0 }]
+          },
+          options: { responsive: true, maintainAspectRatio: true, plugins: { legend: { position: 'right', labels: { boxWidth: 8, font: { size: 8 } } } } }
+        });
+      }
+    }, 150);
+  }
+
+  async function openUserModal(username) {
+    modalOverlay.classList.add('open');
+    modalContent.innerHTML = `<div class="modal-loading"><i class="fas fa-spinner fa-spin"></i> Loading ${username}...</div>`;
+    try {
+      const stats = await getUserStats(username);
+      renderModal(stats);
+    } catch(e) {
+      modalContent.innerHTML = `
+        <div class="modal-loading" style="color:#e74c3c;">
+          <i class="fas fa-exclamation-triangle" style="font-size:2rem;"></i>
+          <p style="margin-top:0.5rem;font-weight:600;">${e.message}</p>
+          <p style="font-size:0.8rem;color:#57606a;margin-top:0.2rem;">Try again or search another user</p>
+          <button onclick="document.getElementById('modalClose').click()" style="margin-top:0.8rem;padding:0.4rem 1.2rem;background:#1f883d;color:white;border:none;border-radius:30px;cursor:pointer;font-weight:600;">Close</button>
+        </div>
+      `;
+    }
+  }
+
+  modalClose.addEventListener('click', () => modalOverlay.classList.remove('open'));
+  modalOverlay.addEventListener('click', (e) => { if (e.target === modalOverlay) modalOverlay.classList.remove('open'); });
+
+  function renderCards(items, typeLabel, query) {
+    if (!items || items.length === 0) {
+      cardGrid.innerHTML = `<div class="empty-state"><i class="fas fa-search"></i><p>No results for "${query}"</p><p style="font-size:0.8rem;margin-top:0.3rem;">Try searching for a username directly</p></div>`;
+      resultCount.textContent = '0 items';
+      return;
+    }
+
+    let html = '';
+    items.forEach(item => {
+      if (item.topic) {
+        html += `
+          <div class="result-card" onclick="window.open('https://github.com/topics/${item.topic}','_blank')">
+            <div class="card-title"><i class="fas fa-hashtag"></i><span>#${item.topic} <span class="fresh-badge">fresh</span></span></div>
+            <div class="card-desc">${item.description || 'GitHub topic'}</div>
+            <div class="card-meta"><span><i class="fas fa-tag"></i> ${item.count || 0} repos</span></div>
+          </div>
+        `;
+        return;
+      }
+
+      if (item.login) {
+        const login = item.login;
+        html += `
+          <div class="result-card" onclick="window.openUserModal('${login}')">
+            <div class="user-avatar-row">
+              <img src="${item.avatar_url || `https://github.com/identicons/${login}.png`}" alt="${login}" onerror="this.src='https://github.com/identicons/${login}.png'" />
+              <span class="user-login">${login}</span>
+            </div>
+            <div class="card-desc">${item.bio || 'GitHub user'}</div>
+            <div class="user-stats">
+              <span class="stat-item"><i class="fas fa-code"></i> ${item.public_repos || 0}</span>
+              <span class="stat-item"><i class="fas fa-users"></i> ${item.followers || 0}</span>
+            </div>
+            <div class="card-meta">
+              <span><i class="fas fa-link"></i> <a href="${item.html_url}" target="_blank" class="card-link" onclick="event.stopPropagation();">View</a></span>
+              <span style="font-size:0.65rem;color:#1f883d;"><i class="fas fa-mouse-pointer"></i> click for stats</span>
+            </div>
+          </div>
+        `;
+        return;
+      }
+
+      if (item.full_name || item.name) {
+        const title = item.full_name || item.name;
+        html += `
+          <div class="result-card" onclick="window.open('${item.html_url || '#'}','_blank')">
+            <div class="card-title"><i class="fas fa-book"></i><span>${title} <span class="fresh-badge">fresh</span></span></div>
+            <div class="card-sub">${item.owner?.login ? `by ${item.owner.login}` : ''}</div>
+            <div class="card-desc">${item.description || 'Repository'}</div>
+            <div class="card-meta">
+              ${item.language ? `<span><i class="fas fa-code"></i> ${item.language}</span>` : ''}
+              ${item.stargazers_count !== undefined ? `<span><i class="fas fa-star"></i> ${item.stargazers_count}</span>` : ''}
+              ${item.forks !== undefined ? `<span><i class="fas fa-code-branch"></i> ${item.forks}</span>` : ''}
+            </div>
+          </div>
+        `;
+      }
+    });
+
+    cardGrid.innerHTML = html;
+    resultCount.textContent = `${items.length} items`;
+  }
+
+
+  async function performSearch(query, type, sort, perPage) {
+    if (!query.trim()) {
+      cardGrid.innerHTML = `<div class="empty-state"><i class="fas fa-search"></i><p>Enter a keyword</p></div>`;
+      resultCount.textContent = '0 items';
+      return;
+    }
+
+    const typeLabel = type === 'all' ? 'All' : type.charAt(0).toUpperCase() + type.slice(1);
+    resultTitle.textContent = `${typeLabel} results for “${query}”`;
+
+    try {
+      const per = parseInt(perPage) || 10;
+      let items = [];
+
+      if (type === 'all' || type === 'users') {
+      
+        const directUsers = await findUserDirect(query);
+        if (directUsers.length > 0) {
+          items = directUsers;
+          renderCards(items, 'Users', query);
+          resultCount.textContent = `${items.length} user found (direct match)`;
+          return;
+        }
+      }
+
+      if (type === 'all') {
+    
+        const [reposData, usersData] = await Promise.all([
+          fetchAPI(`https://api.github.com/search/repositories?q=${encodeURIComponent(query)}&sort=${sort}&per_page=${per}`),
+          fetchAPI(`https://api.github.com/search/users?q=${encodeURIComponent(query)}&per_page=${Math.min(per, 6)}`)
+        ]);
+        
+        const repos = reposData?.items || [];
+        const users = usersData?.items || [];
+        
+        const topics = [
+          { topic: `awesome-${query}`, description: `Awesome ${query} resources`, count: Math.floor(Math.random()*100)+20 },
+          { topic: `learn-${query}`, description: `Learn ${query}`, count: Math.floor(Math.random()*80)+15 }
+        ];
+        
+        items = [
+          ...repos.map(r => ({ ...r, type: 'repo' })),
+          ...users.map(u => ({ ...u, type: 'user' })),
+          ...topics
+        ].sort(() => Math.random() - 0.5).slice(0, per);
+        
+        renderCards(items, 'All', query);
+        resultCount.textContent = `${items.length} items`;
+        return;
+      }
+
+      if (type === 'users') {
+        const users = await searchUsers(query, per);
+        items = users;
+        renderCards(items, 'Users', query);
+        resultCount.textContent = `${items.length} users found`;
+        return;
+      }
+
+      if (type === 'orgs') {
+        const data = await fetchAPI(`https://api.github.com/search/users?q=${encodeURIComponent(query)} type:org&per_page=${per}`);
+        items = (data?.items || []).filter(u => u.type === 'Organization');
+        renderCards(items, 'Organizations', query);
+        resultCount.textContent = `${items.length} orgs found`;
+        return;
+      }
+
+      if (type === 'topics') {
+        const data = await fetchAPI(`https://api.github.com/search/repositories?q=${encodeURIComponent(query)}&sort=stars&per_page=${Math.min(per * 3, 50)}`);
+        const topicMap = new Map();
+        (data?.items || []).forEach(repo => {
+          if (repo.topics) {
+            repo.topics.forEach(t => {
+              if (!topicMap.has(t)) topicMap.set(t, { topic: t, count: 0 });
+              topicMap.get(t).count++;
+            });
+          }
+        });
+        items = Array.from(topicMap.values()).sort((a,b) => b.count - a.count).slice(0, per);
+        if (items.length === 0) {
+          items = [
+            { topic: `awesome-${query}`, count: 45 }, { topic: `learn-${query}`, count: 32 },
+            { topic: `best-${query}`, count: 28 }, { topic: `${query}-tools`, count: 19 }
+          ].slice(0, per);
+        }
+        renderCards(items, 'Topics', query);
+        resultCount.textContent = `${items.length} topics`;
+        return;
+      }
+
+      if (type === 'repos' || type === 'resources') {
+        const q = type === 'repos' ? `${query} book OR handbook OR guide` : `${query} tutorial OR course OR learn OR resource`;
+        const data = await fetchAPI(`https://api.github.com/search/repositories?q=${encodeURIComponent(q)}&sort=stars&per_page=${per}`);
+        items = data?.items || [];
+        renderCards(items, typeLabel, query);
+        resultCount.textContent = `${items.length} items`;
+        return;
+      }
+
+    } catch(e) {
+      cardGrid.innerHTML = `
+        <div class="empty-state">
+          <i class="fas fa-clock"></i>
+          <p style="font-weight:600;color:#1f883d;">${e.message}</p>
+          <p style="font-size:0.85rem;margin-top:0.3rem;">Wait a moment or try <strong>Random</strong></p>
+          <button onclick="runSearch()" style="margin-top:0.8rem;padding:0.4rem 1.2rem;background:#1f883d;color:white;border:none;border-radius:30px;cursor:pointer;font-weight:600;">🔄 Retry</button>
+        </div>
+      `;
+      resultCount.textContent = 'error';
+    }
+  }
+
+  function getRandomQuery() {
+    const words = ['developer','code','web','ai','data','game','app','api','react','vue','python','rust','go','java','c++','ruby','swift','kotlin','typescript','javascript','node','docker','kubernetes','linux','security','blockchain','ml','tensorflow','pytorch','spring','django','flask','express','next','nuxt','svelte','solid','qwik','astro','tailwind','bootstrap','material','ui','ux','design','algorithm','database','sql','nosql','redis','mongodb','postgres','mysql','graphql','rest','grpc','microservice','serverless','aws','azure','gcp','firebase','supabase','prisma','typeorm','sequelize'];
+    return `${words[Math.floor(Math.random()*words.length)]} ${words[Math.floor(Math.random()*words.length)]}`;
+  }
+
+  function runSearch() {
+    currentQuery = searchInput.value.trim() || 'github';
+    performSearch(currentQuery, currentType, sortSelect.value, perPageInput.value || 10);
+  }
+
+  searchBtn.addEventListener('click', runSearch);
+  searchInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') runSearch(); });
+  sortSelect.addEventListener('change', runSearch);
+  perPageInput.addEventListener('change', runSearch);
+
+  filterContainer.addEventListener('click', (e) => {
+    const btn = e.target.closest('.filter-btn');
+    if (btn && btn.dataset.type) {
+      document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      currentType = btn.dataset.type;
+      runSearch();
+    }
+  });
+
+  randomBtn.addEventListener('click', () => {
+    searchInput.value = getRandomQuery();
+    currentQuery = searchInput.value;
+    document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+    document.querySelector('[data-type="all"]')?.classList.add('active');
+    currentType = 'all';
+    runSearch();
+  });
+
+  window.openUserModal = openUserModal;
+
+  // Initial load
+  performSearch('Yrashka200', 'all', 'stars', 10);
+})();
+</script>
+</body>
+</html>
