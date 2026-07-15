@@ -7,7 +7,7 @@
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css" />
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
   <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; font-family: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif; }
+    * { margin: 0; padding: 0; box-sizing: border-box; font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; }
     body { background: #f6f8fa; min-height: 100vh; padding: 1rem; display: flex; justify-content: center; transition: background 0.2s, color 0.2s; }
     body.dark { background: #0d1117; color: #e6edf3; }
     .app { max-width: 1200px; width: 100%; }
@@ -75,8 +75,6 @@
     .empty-state i { font-size: 2.5rem; margin-bottom: 0.5rem; color: #8b949e; }
     .footer { margin-top: 2rem; text-align: center; font-size: 0.75rem; color: #8b949e; }
     .fresh-badge { background: #1f883d; color: white; padding: 0.1rem 0.5rem; border-radius: 30px; font-size: 0.6rem; font-weight: 600; margin-left: 0.3rem; }
-    .topic-tag { display: inline-block; background: #ddf4e4; padding: 0.1rem 0.5rem; border-radius: 30px; font-size: 0.65rem; color: #1f883d; margin: 0.1rem; }
-    body.dark .topic-tag { background: #1f883d33; color: #7ee49a; }
     @media (max-width: 700px) {
       .sort-options { margin-left: 0; width: 100%; }
       .search-box button span { display: none; }
@@ -118,11 +116,13 @@
     .repo-list .repo-item .stars { color: #1f883d; }
     .modal-loading { text-align: center; padding: 1.5rem; color: #57606a; }
     body.dark .modal-loading { color: #8b949e; }
-    .token-status { font-size: 0.65rem; padding: 0.15rem 0.6rem; border-radius: 30px; background: #e74c3c33; color: #e74c3c; border: 1px solid #e74c3c55; }
+    .token-status { font-size: 0.65rem; padding: 0.15rem 0.6rem; border-radius: 30px; background: #e74c3c33; color: #e74c3c; border: 1px solid #e74c3c55; display: inline-flex; align-items: center; gap: 0.4rem; }
     .token-status.active { background: #1f883d33; color: #1f883d; border-color: #1f883d55; }
+    .token-status .countdown { font-weight: 600; font-size: 0.7rem; }
     @media (max-width: 700px) { .chart-row { grid-template-columns: 1fr; } .modal-box { padding: 1rem; } }
-    .search-hint { font-size: 0.7rem; color: #57606a; margin-left: 0.5rem; }
-    body.dark .search-hint { color: #8b949e; }
+    .rate-limit-bar { height: 3px; background: #d0d7de; border-radius: 4px; margin: 4px 0 8px 0; overflow: hidden; }
+    .rate-limit-bar .fill { height: 100%; background: #1f883d; transition: width 0.5s; border-radius: 4px; }
+    body.dark .rate-limit-bar { background: #30363d; }
   </style>
 </head>
 <body>
@@ -130,15 +130,16 @@
   <header>
     <div class="logo"><i class="fab fa-github"></i> Explorer</div>
     <div class="header-actions">
-      <span class="token-status" id="tokenStatus">⚡ 60 req/h</span>
+      <span class="token-status" id="tokenStatus">⚡ <span id="rateCount">60</span>/<span id="rateLimit">60</span> <span class="countdown" id="rateCountdown"></span></span>
       <button class="theme-toggle" id="themeToggle"><i class="fas fa-moon"></i></button>
     </div>
   </header>
   <div class="search-box">
     <i class="fas fa-search"></i>
-    <input type="text" id="searchInput" placeholder="Username, repo, topic..." value="Yrashka200">
+    <input type="text" id="searchInput" placeholder="Username, repo, topic..." value="">
     <button id="searchBtn"><i class="fas fa-arrow-right"></i></button>
   </div>
+  <div class="rate-limit-bar"><div class="fill" id="rateFill" style="width:100%"></div></div>
   <div class="filters-row" id="filterContainer">
     <button class="filter-btn active" data-type="all"><i class="fas fa-globe"></i> All</button>
     <button class="filter-btn" data-type="users"><i class="fas fa-user"></i> Users</button>
@@ -156,11 +157,11 @@
         <option value="updated">Updated</option>
       </select>
       <label><i class="fas fa-list"></i></label>
-      <input type="number" id="perPageInput" min="5" max="30" value="10" style="width:50px;">
+      <input type="number" id="perPageInput" min="5" max="30" value="12" style="width:50px;">
     </div>
   </div>
   <div class="results-header">
-    <h2 id="resultTitle">Results</h2>
+    <h2 id="resultTitle">Random Developers</h2>
     <span id="resultCount">0 items</span>
   </div>
   <div id="resultsContainer"><div class="card-grid" id="cardGrid"></div></div>
@@ -176,6 +177,364 @@
 
 <script>
 (function() {
+  'use strict';
+
+  // ============================================================
+  // 1. GITHUB CLIENT with QUEUE, CACHE, ABORT, RETRY
+  // ============================================================
+  class GitHubClient {
+    constructor() {
+      this.queue = [];
+      this.active = 0;
+      this.maxConcurrent = 3;
+      this.cache = new Map();
+      this.cacheTTL = 6 * 60 * 60 * 1000; // 6 hours
+      this.abortControllers = new Map();
+      this.rateLimit = { remaining: 60, limit: 60, resetAt: Date.now() + 3600000 };
+      this.token = localStorage.getItem('github_token') || '';
+      this.countdownInterval = null;
+      this.updateRateLimitUI();
+      this.startCountdown();
+    }
+
+    setToken(token) {
+      this.token = token;
+      if (token) {
+        localStorage.setItem('github_token', token);
+      } else {
+        localStorage.removeItem('github_token');
+      }
+      this.cache.clear();
+    }
+
+    startCountdown() {
+      if (this.countdownInterval) clearInterval(this.countdownInterval);
+      this.countdownInterval = setInterval(() => {
+        this.updateRateLimitUI();
+      }, 1000);
+    }
+
+    updateRateLimitUI() {
+      const fill = document.getElementById('rateFill');
+      const countEl = document.getElementById('rateCount');
+      const limitEl = document.getElementById('rateLimit');
+      const countdownEl = document.getElementById('rateCountdown');
+      const status = document.getElementById('tokenStatus');
+      
+      if (!fill) return;
+      
+      const remaining = this.rateLimit.remaining;
+      const limit = this.rateLimit.limit;
+      const resetAt = this.rateLimit.resetAt;
+      
+      const pct = Math.max(0, (remaining / limit) * 100);
+      fill.style.width = pct + '%';
+      fill.style.background = pct < 20 ? '#e74c3c' : pct < 50 ? '#f39c12' : '#1f883d';
+      
+      if (countEl) countEl.textContent = remaining;
+      if (limitEl) limitEl.textContent = limit;
+      
+      // Countdown
+      if (countdownEl && resetAt) {
+        const now = Date.now();
+        const diff = Math.max(0, resetAt - now);
+        if (diff > 0) {
+          const hours = Math.floor(diff / 3600000);
+          const mins = Math.floor((diff % 3600000) / 60000);
+          const secs = Math.floor((diff % 60000) / 1000);
+          countdownEl.textContent = `⏱ ${String(hours).padStart(2,'0')}:${String(mins).padStart(2,'0')}:${String(secs).padStart(2,'0')}`;
+        } else {
+          countdownEl.textContent = '⏱ 00:00:00';
+        }
+      }
+      
+      if (status) {
+        const auth = this.token ? '🔑' : '⚡';
+        status.className = 'token-status' + (remaining > 10 ? ' active' : '');
+      }
+    }
+
+    _getCacheKey(url, params) {
+      return url + JSON.stringify(params || {});
+    }
+
+    _getCached(key) {
+      const entry = this.cache.get(key);
+      if (entry && Date.now() - entry.timestamp < this.cacheTTL) {
+        return entry.data;
+      }
+      return null;
+    }
+
+    _setCache(key, data) {
+      this.cache.set(key, { data, timestamp: Date.now() });
+      if (this.cache.size > 100) {
+        const oldest = [...this.cache.entries()].sort((a, b) => a[1].timestamp - b[1].timestamp)[0];
+        this.cache.delete(oldest[0]);
+      }
+    }
+
+    _updateRateLimit(headers) {
+      const remaining = parseInt(headers.get('x-ratelimit-remaining'));
+      const limit = parseInt(headers.get('x-ratelimit-limit'));
+      const reset = parseInt(headers.get('x-ratelimit-reset')) * 1000;
+      
+      if (!isNaN(remaining)) this.rateLimit.remaining = remaining;
+      if (!isNaN(limit)) this.rateLimit.limit = limit;
+      if (!isNaN(reset)) this.rateLimit.resetAt = reset;
+      
+      this.updateRateLimitUI();
+    }
+
+    async _fetchWithRetry(url, options = {}, retries = 3) {
+      const controller = new AbortController();
+      const signal = controller.signal;
+      
+      const existing = this.abortControllers.get(url);
+      if (existing) {
+        try { existing.abort(); } catch(e) {}
+      }
+      this.abortControllers.set(url, controller);
+
+      for (let attempt = 0; attempt < retries; attempt++) {
+        try {
+          const response = await fetch(url, {
+            ...options,
+            signal,
+            headers: {
+              'Accept': 'application/vnd.github.v3+json',
+              ...(this.token ? { 'Authorization': `Bearer ${this.token}` } : {}),
+              ...(options.headers || {})
+            }
+          });
+
+          this._updateRateLimit(response.headers);
+
+          if (response.status === 403) {
+            const reset = parseInt(response.headers.get('x-ratelimit-reset')) * 1000;
+            const wait = Math.max(0, reset - Date.now() + 1000);
+            
+            if (wait < 60000 && attempt < retries - 1) {
+              await new Promise(r => setTimeout(r, wait + 1000));
+              continue;
+            }
+            throw new Error(`Rate limit exceeded. Reset at ${new Date(reset).toLocaleTimeString()}`);
+          }
+
+          if (response.status === 404) return null;
+          if (response.status === 401) {
+            this.token = '';
+            localStorage.removeItem('github_token');
+            throw new Error('Invalid token. Please check your GitHub token.');
+          }
+          if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+          }
+
+          return await response.json();
+        } catch(e) {
+          if (e.name === 'AbortError') {
+            return null;
+          }
+          if (attempt === retries - 1) throw e;
+          await new Promise(r => setTimeout(r, 1000 * Math.pow(2, attempt)));
+        }
+      }
+      return null;
+    }
+
+    // FULL USER DATA - combines multiple REST calls but caches aggressively
+    async getUserFull(login) {
+      const cacheKey = `user_full_${login}`;
+      const cached = this._getCached(cacheKey);
+      if (cached) return cached;
+
+      try {
+        // Get user profile
+        const user = await this._fetchWithRetry(`https://api.github.com/users/${login}`);
+        if (!user) return null;
+
+        // Get repositories
+        const repos = await this._fetchWithRetry(`https://api.github.com/users/${login}/repos?per_page=100&sort=updated`);
+        
+        // Get commit activity for top repos
+        const topRepos = (repos || []).slice(0, 5);
+        let commitActivity = new Array(52).fill(0);
+        
+        // Get activity from top repos
+        for (const repo of topRepos) {
+          try {
+            const activity = await this._fetchWithRetry(`https://api.github.com/repos/${repo.full_name}/stats/commit_activity`);
+            if (Array.isArray(activity) && activity.length === 52) {
+              activity.forEach((w, i) => {
+                if (w && w.total) commitActivity[i] = (commitActivity[i] || 0) + w.total;
+              });
+            }
+          } catch(e) {}
+        }
+
+        // Get total commits via search
+        let totalCommits = 0;
+        try {
+          const commits = await this._fetchWithRetry(`https://api.github.com/search/commits?q=author:${login}`);
+          totalCommits = commits?.total_count || 0;
+        } catch(e) {}
+
+        const repoData = (repos || []).map(r => ({
+          name: r.name,
+          stars: r.stargazers_count || 0,
+          forks: r.forks_count || 0,
+          language: r.language,
+          url: r.html_url,
+          description: r.description
+        }));
+
+        const result = {
+          user: {
+            login: user.login,
+            name: user.name || user.login,
+            bio: user.bio || '',
+            avatar_url: user.avatar_url,
+            html_url: user.html_url,
+            location: user.location || '',
+            followers: user.followers || 0,
+            following: user.following || 0,
+            public_repos: user.public_repos || 0,
+          },
+          topRepos: repoData.slice(0, 10),
+          totalStars: repoData.reduce((acc, r) => acc + (r.stars || 0), 0),
+          totalForks: repoData.reduce((acc, r) => acc + (r.forks || 0), 0),
+          totalCommits: totalCommits,
+          commitActivity: commitActivity,
+          followers: user.followers || 0,
+          following: user.following || 0,
+          publicRepos: user.public_repos || 0,
+          bio: user.bio || '',
+          avatar: user.avatar_url,
+          html_url: user.html_url,
+          name: user.name || user.login
+        };
+
+        this._setCache(cacheKey, result);
+        return result;
+      } catch(e) {
+        console.error('Error fetching user:', e);
+        return null;
+      }
+    }
+
+    async searchUsers(query, perPage = 12) {
+      try {
+        const data = await this._fetchWithRetry(`https://api.github.com/search/users?q=${encodeURIComponent(query)}&per_page=${perPage}`);
+        return data?.items || [];
+      } catch(e) {
+        return [];
+      }
+    }
+
+    async getRandomDevelopers(count = 12) {
+      const sources = [
+        async () => {
+          const data = await this._fetchWithRetry('https://api.github.com/search/users?q=followers:>100&sort=followers&order=desc&per_page=50');
+          return (data?.items || []).map(u => ({ ...u, _source: '⭐ Popular' }));
+        },
+        async () => {
+          const data = await this._fetchWithRetry('https://api.github.com/search/repositories?q=created:>2025-01-01&sort=stars&order=desc&per_page=20');
+          const repos = data?.items || [];
+          const users = [];
+          for (const repo of repos.slice(0, 5)) {
+            try {
+              const contribs = await this._fetchWithRetry(`https://api.github.com/repos/${repo.full_name}/contributors?per_page=3`);
+              if (contribs && Array.isArray(contribs)) {
+                for (const c of contribs) {
+                  if (c.login && !users.find(u => u.login === c.login)) {
+                    users.push({ ...c, _source: '🔥 Trending' });
+                  }
+                }
+              }
+            } catch(e) {}
+          }
+          return users;
+        },
+        async () => {
+          const data = await this._fetchWithRetry('https://api.github.com/search/users?q=type:user&sort=joined&order=desc&per_page=30');
+          return (data?.items || []).map(u => ({ ...u, _source: '✨ Recent' }));
+        }
+      ];
+
+      const allUsers = [];
+      const usedLogins = new Set();
+
+      for (const source of sources) {
+        try {
+          const users = await source();
+          for (const u of users) {
+            if (!usedLogins.has(u.login) && u.login) {
+              usedLogins.add(u.login);
+              allUsers.push(u);
+            }
+          }
+          if (allUsers.length >= count * 2) break;
+        } catch(e) {}
+      }
+
+      // Fill with random search
+      if (allUsers.length < count) {
+        try {
+          const words = ['dev', 'coder', 'hacker', 'engineer', 'builder', 'creator', 'maker'];
+          const word = words[Math.floor(Math.random() * words.length)];
+          const data = await this._fetchWithRetry(`https://api.github.com/search/users?q=${word}&per_page=30`);
+          const extra = data?.items || [];
+          for (const u of extra) {
+            if (!usedLogins.has(u.login) && u.login) {
+              usedLogins.add(u.login);
+              allUsers.push({ ...u, _source: '🎲 Random' });
+            }
+            if (allUsers.length >= count) break;
+          }
+        } catch(e) {}
+      }
+
+      // Enrich with basic data
+      const enriched = [];
+      for (const u of allUsers.slice(0, count)) {
+        try {
+          const full = await this._fetchWithRetry(`https://api.github.com/users/${u.login}`);
+          if (full) enriched.push({ ...u, ...full });
+          else enriched.push(u);
+        } catch(e) {
+          enriched.push(u);
+        }
+      }
+
+      return enriched.sort(() => Math.random() - 0.5);
+    }
+
+    cancelAll() {
+      for (const [url, controller] of this.abortControllers) {
+        try { controller.abort(); } catch(e) {}
+      }
+      this.abortControllers.clear();
+      this.queue = [];
+      this.active = 0;
+    }
+
+    debounce(fn, delay = 500) {
+      let timer;
+      const debounced = (...args) => {
+        clearTimeout(timer);
+        timer = setTimeout(() => fn(...args), delay);
+      };
+      debounced.cancel = () => clearTimeout(timer);
+      return debounced;
+    }
+  }
+
+  // ============================================================
+  // 2. APP
+  // ============================================================
+  const client = new GitHubClient();
+
   const searchInput = document.getElementById('searchInput');
   const searchBtn = document.getElementById('searchBtn');
   const cardGrid = document.getElementById('cardGrid');
@@ -190,7 +549,6 @@
   const modalClose = document.getElementById('modalClose');
   const modalContent = document.getElementById('modalContent');
 
-  let currentQuery = 'Yrashka200';
   let currentType = 'all';
   let darkMode = false;
   let chartInstances = {};
@@ -201,176 +559,9 @@
     themeToggle.innerHTML = `<i class="fas ${darkMode ? 'fa-sun' : 'fa-moon'}"></i>`;
   });
 
-  // 
-  async function fetchAPI(url) {
-    const response = await fetch(url, {
-      headers: { 'Accept': 'application/vnd.github.v3+json' }
-    });
-    if (response.status === 403) {
-      const reset = response.headers.get('X-RateLimit-Reset');
-      const wait = reset ? (parseInt(reset) * 1000 - Date.now() + 2000) : 60000;
-      throw new Error(`Rate limit! Wait ${Math.ceil(wait/1000)}s`);
-    }
-    if (response.status === 404) return null;
-    if (!response.ok) throw new Error(`Error ${response.status}`);
-    return response.json();
-  }
-
-  
-  async function findUserDirect(username) {
-    try {
-      const data = await fetchAPI(`https://api.github.com/users/${username}`);
-      if (data && data.login) {
-        return [data];
-      }
-      return [];
-    } catch(e) {
-      return [];
-    }
-  }
-
-  // API 
-  async function searchUsers(query, perPage) {
-    try {
-      const data = await fetchAPI(`https://api.github.com/search/users?q=${encodeURIComponent(query)}&per_page=${perPage}`);
-      return data?.items || [];
-    } catch(e) {
-      return [];
-    }
-  }
-
-  
-  async function getUserStats(username) {
-    const user = await fetchAPI(`https://api.github.com/users/${username}`);
-    if (!user || !user.login) throw new Error('User not found');
-
-    let repos = [];
-    try {
-      repos = await fetchAPI(`https://api.github.com/users/${username}/repos?per_page=100`);
-      if (!repos) repos = [];
-    } catch(e) {}
-
-    let totalStars = 0, totalForks = 0;
-    const topRepos = (repos || []).slice(0, 10).map(r => ({
-      name: r.name, stars: r.stargazers_count || 0, forks: r.forks_count || 0,
-      language: r.language, url: r.html_url, description: r.description
-    }));
-    (repos || []).forEach(r => { totalStars += r.stargazers_count || 0; totalForks += r.forks_count || 0; });
-
-    let totalCommits = 0;
-    try {
-      const commits = await fetchAPI(`https://api.github.com/search/commits?q=author:${username}`);
-      totalCommits = commits?.total_count || 0;
-    } catch(e) {}
-
-    const activity = new Array(52).fill(0);
-    const sample = (repos || []).slice(0, 5);
-    for (const repo of sample) {
-      try {
-        const data = await fetchAPI(`https://api.github.com/repos/${repo.full_name}/stats/commit_activity`);
-        if (Array.isArray(data) && data.length === 52) {
-          data.forEach((w, i) => { if (w && w.total) activity[i] = (activity[i] || 0) + w.total; });
-        }
-      } catch(e) {}
-    }
-
-    return {
-      user, totalStars, totalForks, totalCommits,
-      followers: user.followers || 0, following: user.following || 0,
-      publicRepos: user.public_repos || 0, topRepos, commitActivity: activity,
-      bio: user.bio || 'No bio', avatar: user.avatar_url,
-      html_url: user.html_url, name: user.name || user.login
-    };
-  }
-
-  function renderModal(stats) {
-    const { user, totalStars, totalForks, totalCommits, followers, following, publicRepos, topRepos, commitActivity, bio, avatar, html_url, name } = stats;
-
-    modalContent.innerHTML = `
-      <div class="modal-user-header">
-        <img src="${avatar}" alt="${user.login}" />
-        <div class="info">
-          <h2>${name} <span style="font-weight:400;font-size:1rem;color:#57606a;">@${user.login}</span></h2>
-          <div class="bio">${bio}</div>
-          <div style="margin-top:0.2rem;display:flex;gap:0.5rem;flex-wrap:wrap;font-size:0.8rem;">
-            <a href="${html_url}" target="_blank" style="color:#1f883d;text-decoration:none;"><i class="fab fa-github"></i> View</a>
-            ${user.location ? `<span><i class="fas fa-map-pin"></i> ${user.location}</span>` : ''}
-          </div>
-        </div>
-      </div>
-      <div class="stats-grid">
-        <div class="stat-card"><div class="num">${publicRepos}</div><div class="label">Repos</div></div>
-        <div class="stat-card"><div class="num">${totalStars}</div><div class="label">⭐ Stars</div></div>
-        <div class="stat-card"><div class="num">${totalForks}</div><div class="label">Forks</div></div>
-        <div class="stat-card"><div class="num">${totalCommits}</div><div class="label">Commits</div></div>
-        <div class="stat-card"><div class="num">${followers}</div><div class="label">Followers</div></div>
-        <div class="stat-card"><div class="num">${following}</div><div class="label">Following</div></div>
-      </div>
-      <div class="chart-row">
-        <div class="chart-box"><h4>📈 52 weeks</h4><canvas id="commitChart"></canvas></div>
-        <div class="chart-box"><h4>⭐ Top repos</h4><canvas id="starsChart"></canvas></div>
-      </div>
-      <div class="repo-list">
-        <h4>📚 Top repositories</h4>
-        ${topRepos.map(r => `<div class="repo-item"><span class="name">${r.name}</span><span><i class="fas fa-star"></i> ${r.stars} <i class="fas fa-code-branch"></i> ${r.forks}</span></div>`).join('') || '<div style="color:#57606a;">No repos</div>'}
-      </div>
-    `;
-
-    setTimeout(() => {
-      const ctx1 = document.getElementById('commitChart');
-      const ctx2 = document.getElementById('starsChart');
-      if (ctx1) {
-        if (chartInstances.commit) chartInstances.commit.destroy();
-        chartInstances.commit = new Chart(ctx1, {
-          type: 'bar',
-          data: {
-            labels: Array.from({length: 52}, (_,i) => `${i+1}`),
-            datasets: [{ label: 'Commits', data: commitActivity, backgroundColor: '#1f883d55', borderColor: '#1f883d', borderWidth: 1 }]
-          },
-          options: { responsive: true, maintainAspectRatio: true, plugins: { legend: { display: false } },
-            scales: { y: { beginAtZero: true, grid: { color: darkMode ? '#30363d' : '#eaeef2' } },
-                     x: { grid: { display: false }, ticks: { maxTicksLimit: 12 } } } }
-        });
-      }
-      if (ctx2) {
-        if (chartInstances.stars) chartInstances.stars.destroy();
-        const sorted = [...topRepos].sort((a,b) => b.stars - a.stars).slice(0, 6);
-        chartInstances.stars = new Chart(ctx2, {
-          type: 'doughnut',
-          data: {
-            labels: sorted.map(r => r.name),
-            datasets: [{ data: sorted.map(r => r.stars), backgroundColor: ['#1f883d','#2ea043','#3fb950','#56d364','#7ee49a','#9ae6b4'], borderWidth: 0 }]
-          },
-          options: { responsive: true, maintainAspectRatio: true, plugins: { legend: { position: 'right', labels: { boxWidth: 8, font: { size: 8 } } } } }
-        });
-      }
-    }, 150);
-  }
-
-  async function openUserModal(username) {
-    modalOverlay.classList.add('open');
-    modalContent.innerHTML = `<div class="modal-loading"><i class="fas fa-spinner fa-spin"></i> Loading ${username}...</div>`;
-    try {
-      const stats = await getUserStats(username);
-      renderModal(stats);
-    } catch(e) {
-      modalContent.innerHTML = `
-        <div class="modal-loading" style="color:#e74c3c;">
-          <i class="fas fa-exclamation-triangle" style="font-size:2rem;"></i>
-          <p style="margin-top:0.5rem;font-weight:600;">${e.message}</p>
-          <p style="font-size:0.8rem;color:#57606a;margin-top:0.2rem;">Try again or search another user</p>
-          <button onclick="document.getElementById('modalClose').click()" style="margin-top:0.8rem;padding:0.4rem 1.2rem;background:#1f883d;color:white;border:none;border-radius:30px;cursor:pointer;font-weight:600;">Close</button>
-        </div>
-      `;
-    }
-  }
-
-  modalClose.addEventListener('click', () => modalOverlay.classList.remove('open'));
-  modalOverlay.addEventListener('click', (e) => { if (e.target === modalOverlay) modalOverlay.classList.remove('open'); });
-
   function renderCards(items, typeLabel, query) {
     if (!items || items.length === 0) {
-      cardGrid.innerHTML = `<div class="empty-state"><i class="fas fa-search"></i><p>No results for "${query}"</p><p style="font-size:0.8rem;margin-top:0.3rem;">Try searching for a username directly</p></div>`;
+      cardGrid.innerHTML = `<div class="empty-state"><i class="fas fa-search"></i><p>No results found</p></div>`;
       resultCount.textContent = '0 items';
       return;
     }
@@ -380,7 +571,7 @@
       if (item.topic) {
         html += `
           <div class="result-card" onclick="window.open('https://github.com/topics/${item.topic}','_blank')">
-            <div class="card-title"><i class="fas fa-hashtag"></i><span>#${item.topic} <span class="fresh-badge">fresh</span></span></div>
+            <div class="card-title"><i class="fas fa-hashtag"></i><span>#${item.topic}</span></div>
             <div class="card-desc">${item.description || 'GitHub topic'}</div>
             <div class="card-meta"><span><i class="fas fa-tag"></i> ${item.count || 0} repos</span></div>
           </div>
@@ -390,19 +581,25 @@
 
       if (item.login) {
         const login = item.login;
+        const avatar = item.avatar_url || `https://github.com/identicons/${login}.png`;
+        const bio = item.bio || 'GitHub user';
+        const source = item._source ? `<span style="font-size:0.55rem;background:#1f883d33;padding:0.1rem 0.4rem;border-radius:30px;color:#1f883d;">${item._source}</span>` : '';
+        
         html += `
           <div class="result-card" onclick="window.openUserModal('${login}')">
             <div class="user-avatar-row">
-              <img src="${item.avatar_url || `https://github.com/identicons/${login}.png`}" alt="${login}" onerror="this.src='https://github.com/identicons/${login}.png'" />
+              <img src="${avatar}" alt="${login}" onerror="this.src='https://github.com/identicons/${login}.png'" />
               <span class="user-login">${login}</span>
+              ${source}
             </div>
-            <div class="card-desc">${item.bio || 'GitHub user'}</div>
+            <div class="card-desc">${bio}</div>
             <div class="user-stats">
-              <span class="stat-item"><i class="fas fa-code"></i> ${item.public_repos || 0}</span>
-              <span class="stat-item"><i class="fas fa-users"></i> ${item.followers || 0}</span>
+              <span class="stat-item"><i class="fas fa-code"></i> <span class="num">${item.public_repos || 0}</span></span>
+              <span class="stat-item"><i class="fas fa-users"></i> <span class="num">${item.followers || 0}</span></span>
+              <span class="stat-item"><i class="fas fa-star"></i> <span class="num">${item.stargazers_count || 0}</span></span>
             </div>
             <div class="card-meta">
-              <span><i class="fas fa-link"></i> <a href="${item.html_url}" target="_blank" class="card-link" onclick="event.stopPropagation();">View</a></span>
+              <span><i class="fas fa-link"></i> <a href="${item.html_url || `https://github.com/${login}`}" target="_blank" class="card-link" onclick="event.stopPropagation();">View</a></span>
               <span style="font-size:0.65rem;color:#1f883d;"><i class="fas fa-mouse-pointer"></i> click for stats</span>
             </div>
           </div>
@@ -414,7 +611,7 @@
         const title = item.full_name || item.name;
         html += `
           <div class="result-card" onclick="window.open('${item.html_url || '#'}','_blank')">
-            <div class="card-title"><i class="fas fa-book"></i><span>${title} <span class="fresh-badge">fresh</span></span></div>
+            <div class="card-title"><i class="fas fa-book"></i><span>${title}</span></div>
             <div class="card-sub">${item.owner?.login ? `by ${item.owner.login}` : ''}</div>
             <div class="card-desc">${item.description || 'Repository'}</div>
             <div class="card-meta">
@@ -431,11 +628,11 @@
     resultCount.textContent = `${items.length} items`;
   }
 
-
   async function performSearch(query, type, sort, perPage) {
+    client.cancelAll();
+    
     if (!query.trim()) {
-      cardGrid.innerHTML = `<div class="empty-state"><i class="fas fa-search"></i><p>Enter a keyword</p></div>`;
-      resultCount.textContent = '0 items';
+      await showRandomDevelopers();
       return;
     }
 
@@ -447,44 +644,30 @@
       let items = [];
 
       if (type === 'all' || type === 'users') {
-      
-        const directUsers = await findUserDirect(query);
-        if (directUsers.length > 0) {
-          items = directUsers;
+        const directUser = await client._fetchWithRetry(`https://api.github.com/users/${query}`);
+        if (directUser && directUser.login) {
+          items = [directUser];
           renderCards(items, 'Users', query);
-          resultCount.textContent = `${items.length} user found (direct match)`;
+          resultCount.textContent = `1 user found`;
           return;
         }
       }
 
       if (type === 'all') {
-    
         const [reposData, usersData] = await Promise.all([
-          fetchAPI(`https://api.github.com/search/repositories?q=${encodeURIComponent(query)}&sort=${sort}&per_page=${per}`),
-          fetchAPI(`https://api.github.com/search/users?q=${encodeURIComponent(query)}&per_page=${Math.min(per, 6)}`)
+          client._fetchWithRetry(`https://api.github.com/search/repositories?q=${encodeURIComponent(query)}&sort=${sort}&per_page=${per}`),
+          client._fetchWithRetry(`https://api.github.com/search/users?q=${encodeURIComponent(query)}&per_page=${Math.min(per, 6)}`)
         ]);
-        
         const repos = reposData?.items || [];
         const users = usersData?.items || [];
-        
-        const topics = [
-          { topic: `awesome-${query}`, description: `Awesome ${query} resources`, count: Math.floor(Math.random()*100)+20 },
-          { topic: `learn-${query}`, description: `Learn ${query}`, count: Math.floor(Math.random()*80)+15 }
-        ];
-        
-        items = [
-          ...repos.map(r => ({ ...r, type: 'repo' })),
-          ...users.map(u => ({ ...u, type: 'user' })),
-          ...topics
-        ].sort(() => Math.random() - 0.5).slice(0, per);
-        
+        items = [...repos.map(r => ({ ...r, type: 'repo' })), ...users.map(u => ({ ...u, type: 'user' }))];
         renderCards(items, 'All', query);
         resultCount.textContent = `${items.length} items`;
         return;
       }
 
       if (type === 'users') {
-        const users = await searchUsers(query, per);
+        const users = await client.searchUsers(query, per);
         items = users;
         renderCards(items, 'Users', query);
         resultCount.textContent = `${items.length} users found`;
@@ -492,7 +675,7 @@
       }
 
       if (type === 'orgs') {
-        const data = await fetchAPI(`https://api.github.com/search/users?q=${encodeURIComponent(query)} type:org&per_page=${per}`);
+        const data = await client._fetchWithRetry(`https://api.github.com/search/users?q=${encodeURIComponent(query)} type:org&per_page=${per}`);
         items = (data?.items || []).filter(u => u.type === 'Organization');
         renderCards(items, 'Organizations', query);
         resultCount.textContent = `${items.length} orgs found`;
@@ -500,7 +683,7 @@
       }
 
       if (type === 'topics') {
-        const data = await fetchAPI(`https://api.github.com/search/repositories?q=${encodeURIComponent(query)}&sort=stars&per_page=${Math.min(per * 3, 50)}`);
+        const data = await client._fetchWithRetry(`https://api.github.com/search/repositories?q=${encodeURIComponent(query)}&sort=stars&per_page=${Math.min(per * 3, 50)}`);
         const topicMap = new Map();
         (data?.items || []).forEach(repo => {
           if (repo.topics) {
@@ -524,7 +707,7 @@
 
       if (type === 'repos' || type === 'resources') {
         const q = type === 'repos' ? `${query} book OR handbook OR guide` : `${query} tutorial OR course OR learn OR resource`;
-        const data = await fetchAPI(`https://api.github.com/search/repositories?q=${encodeURIComponent(q)}&sort=stars&per_page=${per}`);
+        const data = await client._fetchWithRetry(`https://api.github.com/search/repositories?q=${encodeURIComponent(q)}&sort=stars&per_page=${per}`);
         items = data?.items || [];
         renderCards(items, typeLabel, query);
         resultCount.textContent = `${items.length} items`;
@@ -536,7 +719,6 @@
         <div class="empty-state">
           <i class="fas fa-clock"></i>
           <p style="font-weight:600;color:#1f883d;">${e.message}</p>
-          <p style="font-size:0.85rem;margin-top:0.3rem;">Wait a moment or try <strong>Random</strong></p>
           <button onclick="runSearch()" style="margin-top:0.8rem;padding:0.4rem 1.2rem;background:#1f883d;color:white;border:none;border-radius:30px;cursor:pointer;font-weight:600;">🔄 Retry</button>
         </div>
       `;
@@ -544,18 +726,162 @@
     }
   }
 
-  function getRandomQuery() {
-    const words = ['developer','code','web','ai','data','game','app','api','react','vue','python','rust','go','java','c++','ruby','swift','kotlin','typescript','javascript','node','docker','kubernetes','linux','security','blockchain','ml','tensorflow','pytorch','spring','django','flask','express','next','nuxt','svelte','solid','qwik','astro','tailwind','bootstrap','material','ui','ux','design','algorithm','database','sql','nosql','redis','mongodb','postgres','mysql','graphql','rest','grpc','microservice','serverless','aws','azure','gcp','firebase','supabase','prisma','typeorm','sequelize'];
-    return `${words[Math.floor(Math.random()*words.length)]} ${words[Math.floor(Math.random()*words.length)]}`;
+  async function showRandomDevelopers() {
+    resultTitle.textContent = '🔥 Random Developers';
+    try {
+      const users = await client.getRandomDevelopers(parseInt(perPageInput.value) || 12);
+      renderCards(users, 'Random Developers', '');
+      resultCount.textContent = `${users.length} developers found`;
+    } catch(e) {
+      cardGrid.innerHTML = `
+        <div class="empty-state">
+          <i class="fas fa-exclamation-triangle"></i>
+          <p style="font-weight:600;color:#e74c3c;">${e.message}</p>
+          <button onclick="showRandomDevelopers()" style="margin-top:0.8rem;padding:0.4rem 1.2rem;background:#1f883d;color:white;border:none;border-radius:30px;cursor:pointer;font-weight:600;">🔄 Try Again</button>
+        </div>
+      `;
+      resultCount.textContent = 'error';
+    }
   }
+
+  const debouncedSearch = client.debounce(() => runSearch(), 500);
 
   function runSearch() {
-    currentQuery = searchInput.value.trim() || 'github';
-    performSearch(currentQuery, currentType, sortSelect.value, perPageInput.value || 10);
+    const query = searchInput.value.trim();
+    if (!query) {
+      showRandomDevelopers();
+      return;
+    }
+    performSearch(query, currentType, sortSelect.value, perPageInput.value || 10);
   }
 
+  // ============================================================
+  // 3. MODAL - Fixed stats
+  // ============================================================
+  async function openUserModal(username) {
+    modalOverlay.classList.add('open');
+    modalContent.innerHTML = `<div class="modal-loading"><i class="fas fa-spinner fa-spin"></i> Loading ${username}...</div>`;
+    try {
+      const stats = await client.getUserFull(username);
+      if (!stats) throw new Error('User not found');
+      renderModal(stats);
+    } catch(e) {
+      modalContent.innerHTML = `
+        <div class="modal-loading" style="color:#e74c3c;">
+          <i class="fas fa-exclamation-triangle" style="font-size:2rem;"></i>
+          <p style="margin-top:0.5rem;font-weight:600;">${e.message}</p>
+          <button onclick="document.getElementById('modalClose').click()" style="margin-top:0.8rem;padding:0.4rem 1.2rem;background:#1f883d;color:white;border:none;border-radius:30px;cursor:pointer;font-weight:600;">Close</button>
+        </div>
+      `;
+    }
+  }
+
+  function renderModal(stats) {
+    const { user, totalStars, totalForks, totalCommits, followers, following, publicRepos, topRepos, commitActivity, bio, avatar, html_url, name } = stats;
+
+    modalContent.innerHTML = `
+      <div class="modal-user-header">
+        <img src="${avatar}" alt="${user.login}" onerror="this.src='https://github.com/identicons/${user.login}.png'" />
+        <div class="info">
+          <h2>${name} <span style="font-weight:400;font-size:1rem;color:#57606a;">@${user.login}</span></h2>
+          <div class="bio">${bio || 'No bio available'}</div>
+          <div style="margin-top:0.2rem;display:flex;gap:0.5rem;flex-wrap:wrap;font-size:0.8rem;">
+            <a href="${html_url}" target="_blank" style="color:#1f883d;text-decoration:none;"><i class="fab fa-github"></i> View Profile</a>
+            ${user.location ? `<span><i class="fas fa-map-pin"></i> ${user.location}</span>` : ''}
+          </div>
+        </div>
+      </div>
+      <div class="stats-grid">
+        <div class="stat-card"><div class="num">${publicRepos || 0}</div><div class="label">Repos</div></div>
+        <div class="stat-card"><div class="num">${totalStars || 0}</div><div class="label">⭐ Stars</div></div>
+        <div class="stat-card"><div class="num">${totalForks || 0}</div><div class="label">Forks</div></div>
+        <div class="stat-card"><div class="num">${totalCommits || 0}</div><div class="label">Commits</div></div>
+        <div class="stat-card"><div class="num">${followers || 0}</div><div class="label">Followers</div></div>
+        <div class="stat-card"><div class="num">${following || 0}</div><div class="label">Following</div></div>
+      </div>
+      <div class="chart-row">
+        <div class="chart-box"><h4>📈 52 weeks activity</h4><canvas id="commitChart"></canvas></div>
+        <div class="chart-box"><h4>⭐ Top repos</h4><canvas id="starsChart"></canvas></div>
+      </div>
+      <div class="repo-list">
+        <h4>📚 Top repositories</h4>
+        ${topRepos && topRepos.length > 0 ? topRepos.map(r => `
+          <div class="repo-item">
+            <span class="name">${r.name}</span>
+            <span><i class="fas fa-star"></i> ${r.stars || 0} <i class="fas fa-code-branch"></i> ${r.forks || 0}</span>
+          </div>
+        `).join('') : '<div style="color:#57606a;padding:0.5rem 0;">No repositories found</div>'}
+      </div>
+    `;
+
+    setTimeout(() => {
+      const ctx1 = document.getElementById('commitChart');
+      const ctx2 = document.getElementById('starsChart');
+      
+      if (ctx1) {
+        if (chartInstances.commit) chartInstances.commit.destroy();
+        const activityData = commitActivity && commitActivity.length === 52 ? commitActivity : new Array(52).fill(0);
+        chartInstances.commit = new Chart(ctx1, {
+          type: 'bar',
+          data: {
+            labels: Array.from({length: 52}, (_,i) => `${i+1}`),
+            datasets: [{ 
+              label: 'Commits', 
+              data: activityData, 
+              backgroundColor: '#1f883d55', 
+              borderColor: '#1f883d', 
+              borderWidth: 1 
+            }]
+          },
+          options: { 
+            responsive: true, 
+            maintainAspectRatio: true, 
+            plugins: { legend: { display: false } },
+            scales: { 
+              y: { beginAtZero: true, grid: { color: darkMode ? '#30363d' : '#eaeef2' } },
+              x: { grid: { display: false }, ticks: { maxTicksLimit: 12 } } 
+            } 
+          }
+        });
+      }
+      
+      if (ctx2) {
+        if (chartInstances.stars) chartInstances.stars.destroy();
+        const sorted = (topRepos || []).sort((a,b) => (b.stars || 0) - (a.stars || 0)).slice(0, 6);
+        if (sorted.length > 0) {
+          chartInstances.stars = new Chart(ctx2, {
+            type: 'doughnut',
+            data: {
+              labels: sorted.map(r => r.name),
+              datasets: [{ 
+                data: sorted.map(r => r.stars || 0), 
+                backgroundColor: ['#1f883d','#2ea043','#3fb950','#56d364','#7ee49a','#9ae6b4'], 
+                borderWidth: 0 
+              }]
+            },
+            options: { 
+              responsive: true, 
+              maintainAspectRatio: true, 
+              plugins: { 
+                legend: { position: 'right', labels: { boxWidth: 8, font: { size: 8 } } } 
+              } 
+            }
+          });
+        } else {
+          ctx2.parentElement.innerHTML = '<h4>⭐ Top repos</h4><div style="padding:1rem;text-align:center;color:#57606a;">No data</div>';
+        }
+      }
+    }, 200);
+  }
+
+  // Event listeners
+  modalClose.addEventListener('click', () => modalOverlay.classList.remove('open'));
+  modalOverlay.addEventListener('click', (e) => { if (e.target === modalOverlay) modalOverlay.classList.remove('open'); });
+
   searchBtn.addEventListener('click', runSearch);
-  searchInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') runSearch(); });
+  searchInput.addEventListener('input', debouncedSearch);
+  searchInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { debouncedSearch.cancel?.(); runSearch(); } });
+  
   sortSelect.addEventListener('change', runSearch);
   perPageInput.addEventListener('change', runSearch);
 
@@ -569,19 +895,14 @@
     }
   });
 
-  randomBtn.addEventListener('click', () => {
-    searchInput.value = getRandomQuery();
-    currentQuery = searchInput.value;
-    document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
-    document.querySelector('[data-type="all"]')?.classList.add('active');
-    currentType = 'all';
-    runSearch();
-  });
+  randomBtn.addEventListener('click', showRandomDevelopers);
 
   window.openUserModal = openUserModal;
 
   // Initial load
-  performSearch('Yrashka200', 'all', 'stars', 10);
+  showRandomDevelopers();
+
+  console.log('💡 For higher rate limits, set a token: localStorage.setItem("github_token", "your_token_here")');
 })();
 </script>
 </body>
